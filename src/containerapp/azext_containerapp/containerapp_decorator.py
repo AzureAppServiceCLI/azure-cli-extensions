@@ -857,26 +857,16 @@ class ContainerAppPreviewCreateDecorator(ContainerAppCreateDecorator):
     # If --registry-server is ACR and ACR anonymous Pull disabled and without username and password
     # We use system-assigned managed identity for image pull by default
     def set_up_system_assigned_identity_as_default_if_using_acr(self):
-        from azure.cli.core.commands.client_factory import get_mgmt_service_client
-        from azure.mgmt.containerregistry import ContainerRegistryManagementClient
-        import json
-
         registry_server = self.get_argument_registry_server()
-        if ACR_IMAGE_SUFFIX not in registry_server:
-            return
-        client = get_mgmt_service_client(self.cmd.cli_ctx, ContainerRegistryManagementClient).registries
-        acr = acr_show(self.cmd, client, registry_server[: registry_server.rindex(ACR_IMAGE_SUFFIX)])
+        if registry_server is not None:
+            if ACR_IMAGE_SUFFIX not in registry_server:
+                return
 
-        # If ACR anonymous Pull Enabled, it means that no need credential to pull images from the registry
-        print(acr)
-        if acr.admin_user_enabled:
-            return
-
-        if self.get_argument_registry_identity() is None and self.get_argument_registry_user() is None and self.get_argument_registry_pass() is None:
-            self.set_argument_registry_identity('system')
+            if self.get_argument_registry_identity() is None and self.get_argument_registry_user() is None and self.get_argument_registry_pass() is None:
+                self.set_argument_registry_identity('system')
 
     def construct_payload(self):
-        # self.set_up_system_assigned_identity_as_default_if_using_acr()
+        self.set_up_system_assigned_identity_as_default_if_using_acr()
         self.parent_construct_payload()
         self.set_up_service_type()
         self.set_up_service_binds()
