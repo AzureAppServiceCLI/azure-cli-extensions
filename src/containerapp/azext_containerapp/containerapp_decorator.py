@@ -666,6 +666,16 @@ class ContainerAppPreviewCreateDecorator(ContainerAppCreateDecorator):
                 if not env_has_managed_identity(self.cmd, managed_env_rg, managed_env_name, identity):
                     set_managed_identity(self.cmd, self.get_argument_resource_group_name(), self.containerapp_def, user_assigned=[identity])
 
+    # If --registry-server is ACR, use system-assigned managed identity for image pull by default
+    def set_up_system_assigned_identity_as_default_if_using_acr(self):
+        registry_server = self.get_argument_registry_server()
+        if registry_server is not None:
+            if ACR_IMAGE_SUFFIX not in registry_server:
+                return
+
+            if self.get_argument_registry_identity() is None and self.get_argument_registry_user() is None and self.get_argument_registry_pass() is None:
+                self.set_argument_registry_identity('system')
+
     def parent_construct_payload(self):
         # Make containerapp identity has SystemAssigned as default when using `az containerapp create` with an ACR and only supply the --registry-server flag without the username and password
 
@@ -853,17 +863,6 @@ class ContainerAppPreviewCreateDecorator(ContainerAppCreateDecorator):
 
         # preview logic
         self.set_up_registry_identity()
-
-    # If --registry-server is ACR and ACR anonymous Pull disabled and without username and password
-    # We use system-assigned managed identity for image pull by default
-    def set_up_system_assigned_identity_as_default_if_using_acr(self):
-        registry_server = self.get_argument_registry_server()
-        if registry_server is not None:
-            if ACR_IMAGE_SUFFIX not in registry_server:
-                return
-
-            if self.get_argument_registry_identity() is None and self.get_argument_registry_user() is None and self.get_argument_registry_pass() is None:
-                self.set_argument_registry_identity('system')
 
     def construct_payload(self):
         self.set_up_system_assigned_identity_as_default_if_using_acr()
