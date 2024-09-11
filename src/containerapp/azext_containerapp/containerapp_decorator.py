@@ -388,7 +388,7 @@ class ContainerAppUpdateDecorator(BaseContainerAppDecorator):
                 self.new_containerapp["properties"]["configuration"]["secrets"] = []
 
             if self.get_argument_registry_server():
-                if not self.get_argument_registry_pass() or not self.get_argument_registry_user():
+                if (not self.get_argument_registry_pass() or not self.get_argument_registry_user()) and not self.get_argument_registry_identity():
                     if ACR_IMAGE_SUFFIX not in self.get_argument_registry_server():
                         raise RequiredArgumentMissingError(
                             'Registry url is required if using Azure Container Registry, otherwise Registry username and password are required if using Dockerhub')
@@ -415,19 +415,23 @@ class ContainerAppUpdateDecorator(BaseContainerAppDecorator):
                                 self.get_argument_registry_pass(),
                                 update_existing_secret=True,
                                 disable_warnings=True)
+                        if self.get_argument_registry_identity():
+                            r["identity"] = self.get_argument_registry_identity()
 
                 # If not updating existing registry, add as new registry
                 if not updating_existing_registry:
                     registry = RegistryCredentialsModel
                     registry["server"] = self.get_argument_registry_server()
                     registry["username"] = self.get_argument_registry_user()
-                    registry["passwordSecretRef"] = store_as_secret_and_return_secret_ref(
-                        self.new_containerapp["properties"]["configuration"]["secrets"],
-                        self.get_argument_registry_user(),
-                        self.get_argument_registry_server(),
-                        self.get_argument_registry_pass(),
-                        update_existing_secret=True,
-                        disable_warnings=True)
+                    registry["identity"] = self.get_argument_registry_identity()
+                    if self.get_argument_registry_pass():
+                        registry["passwordSecretRef"] = store_as_secret_and_return_secret_ref(
+                            self.new_containerapp["properties"]["configuration"]["secrets"],
+                            self.get_argument_registry_user(),
+                            self.get_argument_registry_server(),
+                            self.get_argument_registry_pass(),
+                            update_existing_secret=True,
+                            disable_warnings=True)
 
                     registries_def.append(registry)
 
@@ -1357,8 +1361,38 @@ class ContainerAppPreviewUpdateDecorator(ContainerAppUpdateDecorator):
             if scale_rule_type == "http" or scale_rule_type == "tcp":
                 raise InvalidArgumentValueError("--scale-rule-identity cannot be set when --scale-rule-type is 'http' or 'tcp'")
 
+    # not create role assignment if it's env system msi
+    def check_create_acrpull_role_assignment(self):
+        identity = self.get_argument_registry_identity()
+        if identity and not is_registry_msi_system(identity) and not is_registry_msi_system_environment(identity):
+            logger.info("Creating an acrpull role assignment for the registry identity")
+            create_acrpull_role_assignment(self.cmd, self.get_argument_registry_server(), identity, skip_error=True)
+
+    # not set up msi for current containerapp if it's env msi
+    def set_up_managed_identity(self):
+        identity = self.get_argument_registry_identity()
+        user_assigned_identity = self.get_argument_user_assigned()
+        if identity:
+            safe_set(self.new_containerapp, "identity", value=self.containerapp_def["identity"])
+            if is_registry_msi_system(identity):
+                set_managed_identity(self.cmd, self.get_argument_resource_group_name(), self.new_containerapp,
+                                     system_assigned=True)
+            elif is_valid_resource_id(identity):
+                parsed_managed_env = parse_resource_id(safe_get(self.containerapp_def, "properties", "environmentId"))
+                managed_env_name = parsed_managed_env['name']
+                managed_env_rg = parsed_managed_env['resource_group']
+                if not env_has_managed_identity(self.cmd, managed_env_rg, managed_env_name, identity):
+                    set_managed_identity(self.cmd, self.get_argument_resource_group_name(), self.new_containerapp,
+                                         user_assigned=[identity])
+
+        if user_assigned_identity:
+            set_managed_identity(self.cmd, self.get_argument_resource_group_name(), self.new_containerapp,
+                                 user_assigned=user_assigned_identity)
+
     def construct_payload(self):
+        self.check_create_acrpull_role_assignment()
         super().construct_payload()
+        self.set_up_managed_identity()
         self.set_up_service_bindings()
         self.set_up_unbind_service_bindings()
         self.set_up_source()
