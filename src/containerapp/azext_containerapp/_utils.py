@@ -755,8 +755,9 @@ def env_has_managed_identity(cmd, resource_group_name, env_name, identity):
         return True
 
     result = False
-    for msi in managed_env_info["identity"]["userAssignedIdentities"]:
-        if msi.lower() == identity:
-            result = True
-            break
+    if safe_get(managed_env_info, "identity", "userAssignedIdentities"):
+        for msi in safe_get(managed_env_info, "identity", "userAssignedIdentities"):
+            if msi.lower() == identity:
+                result = True
+                break
     return result

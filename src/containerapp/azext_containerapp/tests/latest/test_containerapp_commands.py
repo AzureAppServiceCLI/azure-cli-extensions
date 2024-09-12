@@ -9,6 +9,7 @@ import time
 import unittest
 
 from azure.cli.command_modules.containerapp._utils import format_location
+from unittest import mock
 from azure.cli.core.azclierror import ValidationError, CLIInternalError
 
 from azure.cli.testsdk.scenario_tests import AllowLargeResponse, live_only
@@ -1462,7 +1463,6 @@ class ContainerappRegistryIdentityTests(ScenarioTest):
 
     @AllowLargeResponse(8192)
     @ResourceGroupPreparer(location="westeurope")
-    @live_only()  # encounters 'CannotOverwriteExistingCassetteException' only when run from recording (passes when run live)
     def test_containerapp_registry_identity_user(self, resource_group):
         # MSI is not available in North Central US (Stage), if the TEST_LOCATION is "northcentralusstage", use eastus as location
         location = TEST_LOCATION
@@ -1482,13 +1482,14 @@ class ContainerappRegistryIdentityTests(ScenarioTest):
 
         self.cmd(f'acr create --sku basic -n {acr} -g {resource_group} --admin-enabled')
         self.cmd(f'acr import -n {acr} --source {image_source}')
-
-        self.cmd(f'containerapp create -g {resource_group} -n {app} --registry-identity {identity_rid} --image {image_name} --ingress external --target-port 80 --environment {env} --registry-server {acr}.azurecr.io')
+        with mock.patch('azure.cli.command_modules.role.custom._gen_guid', side_effect=self.create_guid):
+            self.cmd(f'containerapp create -g {resource_group} -n {app} --registry-identity {identity_rid} --image {image_name} --ingress external --target-port 80 --environment {env} --registry-server {acr}.azurecr.io')
 
         self.cmd(f'containerapp show -g {resource_group} -n {app}', checks=[JMESPathCheck("properties.provisioningState", "Succeeded")])
 
         app2 = self.create_random_name(prefix='aca', length=24)
-        self.cmd(f'containerapp create -g {resource_group} -n {app2} --registry-identity {identity_rid} --image {image_name} --ingress external --target-port 80 --environment {env} --registry-server {acr}.azurecr.io --revision-suffix test1')
+        with mock.patch('azure.cli.command_modules.role.custom._gen_guid', side_effect=self.create_guid):
+            self.cmd(f'containerapp create -g {resource_group} -n {app2} --registry-identity {identity_rid} --image {image_name} --ingress external --target-port 80 --environment {env} --registry-server {acr}.azurecr.io --revision-suffix test1')
 
         self.cmd(f'containerapp show -g {resource_group} -n {app2}', checks=[
             JMESPathCheck("properties.provisioningState", "Succeeded"),
@@ -1498,7 +1499,6 @@ class ContainerappRegistryIdentityTests(ScenarioTest):
 
     @AllowLargeResponse(8192)
     @ResourceGroupPreparer(location="westeurope")
-    @live_only()  # encounters 'CannotOverwriteExistingCassetteException' only when run from recording (passes when run live)
     def test_containerapp_registry_identity_system(self, resource_group):
         # MSI is not available in North Central US (Stage), if the TEST_LOCATION is "northcentralusstage", use eastus as location
         location = TEST_LOCATION
@@ -1515,13 +1515,14 @@ class ContainerappRegistryIdentityTests(ScenarioTest):
 
         self.cmd(f'acr create --sku basic -n {acr} -g {resource_group} --admin-enabled')
         self.cmd(f'acr import -n {acr} --source {image_source}')
-
-        self.cmd(f'containerapp create -g {resource_group} -n {app} --registry-identity "system" --image {image_name} --ingress external --target-port 80 --environment {env} --registry-server {acr}.azurecr.io')
+        with mock.patch('azure.cli.command_modules.role.custom._gen_guid', side_effect=self.create_guid):
+            self.cmd(f'containerapp create -g {resource_group} -n {app} --registry-identity "system" --image {image_name} --ingress external --target-port 80 --environment {env} --registry-server {acr}.azurecr.io')
 
         self.cmd(f'containerapp show -g {resource_group} -n {app}', checks=[JMESPathCheck("properties.provisioningState", "Succeeded")])
 
         app2 = self.create_random_name(prefix='aca', length=24)
-        self.cmd(f'containerapp create -g {resource_group} -n {app2} --registry-identity "system" --image {image_name} --ingress external --target-port 80 --environment {env} --registry-server {acr}.azurecr.io --revision-suffix test1')
+        with mock.patch('azure.cli.command_modules.role.custom._gen_guid', side_effect=self.create_guid):
+            self.cmd(f'containerapp create -g {resource_group} -n {app2} --registry-identity "system" --image {image_name} --ingress external --target-port 80 --environment {env} --registry-server {acr}.azurecr.io --revision-suffix test1')
 
         self.cmd(f'containerapp show -g {resource_group} -n {app2}', checks=[
             JMESPathCheck("properties.provisioningState", "Succeeded"),
@@ -1570,13 +1571,17 @@ class ContainerappRegistryIdentityTests(ScenarioTest):
     @AllowLargeResponse(8192)
     @ResourceGroupPreparer(location="westeurope")
     def test_containerapp_registry_acr_look_up_credentical(self, resource_group):
-        self.cmd('configure --defaults location={}'.format(TEST_LOCATION))
+        # MSI is not available in North Central US (Stage), if the TEST_LOCATION is "northcentralusstage", use eastus as location
+        location = TEST_LOCATION
+        if format_location(location) == format_location(STAGE_LOCATION):
+            location = "eastus"
+        self.cmd('configure --defaults location={}'.format(location))
         app = self.create_random_name(prefix='aca', length=24)
         acr = self.create_random_name(prefix='acr', length=24)
         image_source = "mcr.microsoft.com/k8se/quickstart:latest"
         image_name = f"{acr}.azurecr.io/k8se/quickstart:latest"
 
-        env = prepare_containerapp_env_for_app_e2e_tests(self)
+        env = prepare_containerapp_env_for_app_e2e_tests(self, location=location)
 
         acr_location = TEST_LOCATION
         if format_location(acr_location) == format_location(STAGE_LOCATION):
@@ -1584,7 +1589,20 @@ class ContainerappRegistryIdentityTests(ScenarioTest):
         self.cmd(f'acr create --sku basic -n {acr} -g {resource_group} --admin-enabled --location {acr_location}')
         self.cmd(f'acr import -n {acr} --source {image_source}')
 
-        self.cmd(f'containerapp create -g {resource_group} -n {app}  --image {image_name} --ingress external --target-port 80 --environment {env} --registry-server {acr}.azurecr.io')
+        # `az containberapp create` only with `--registry-server {acr}.azurecr.io`, use SystemAssigned as default for image pull
+        with mock.patch('azure.cli.command_modules.role.custom._gen_guid', side_effect=self.create_guid):
+            self.cmd(f'containerapp create -g {resource_group} -n {app}  --image {image_name} --ingress external --target-port 80 --environment {env} --registry-server {acr}.azurecr.io', checks=[
+                JMESPathCheck("identity.type", "SystemAssigned"),
+                JMESPathCheck("properties.configuration.secrets", None),
+                JMESPathCheck("length(properties.configuration.registries)", 1),
+                JMESPathCheck("properties.configuration.registries[0].identity", 'system'),
+                JMESPathCheck("properties.configuration.registries[0].server", f'{acr}.azurecr.io'),
+                JMESPathCheck("properties.configuration.registries[0].username", ""),
+                JMESPathCheck("properties.configuration.registries[0].passwordSecretRef", ""),
+            ])
+
+        # --registry-server {acr}.azurecr.io --registry-username, auto lookup credentical
+        self.cmd(f'containerapp create -g {resource_group} -n {app}  --image {image_name} --ingress external --target-port 80 --environment {env} --registry-server {acr}.azurecr.io --registry-username a')
 
         self.cmd(f'containerapp show -g {resource_group} -n {app}', checks=[
             JMESPathCheck("properties.provisioningState", "Succeeded"),
@@ -1695,7 +1713,6 @@ class ContainerappUpRegistryIdentityTests(ScenarioTest):
     @AllowLargeResponse(8192)
     @ResourceGroupPreparer(location="westeurope")
     def test_containerapp_up_registry_identity_user(self, resource_group):
-        self.cmd('az containerapp up -n xinyuapp3 -g xinyueastusrepro --location eastus --user-assigned /subscriptions/23f95f0e-e782-47be-9f97-56035ec10e42/resourcegroups/nicesky-93f6eeee-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/nicesky-93f6eeee-kubelet-indentity --image acaxinyulogtest.azurecr.io/logtest:0.2 --ingress external --target-port 80 --environment /subscriptions/23f95f0e-e782-47be-9f97-56035ec10e42/resourceGroups/xinyueastusrepro/providers/Microsoft.App/managedEnvironments/xinyueastusrepro-env --registry-server acaxinyulogtest.azurecr.io --registry-identity /subscriptions/23f95f0e-e782-47be-9f97-56035ec10e42/resourcegroups/nicesky-93f6eeee-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/nicesky-93f6eeee-control-plane-indentity')
         # MSI is not available in North Central US (Stage), if the TEST_LOCATION is "northcentralusstage", use eastus as location
         location = TEST_LOCATION
         if format_location(location) == format_location(STAGE_LOCATION):
@@ -1719,8 +1736,9 @@ class ContainerappUpRegistryIdentityTests(ScenarioTest):
         self.cmd(f'acr import -n {acr} --source {image_source}')
         # create a new containerapp with `az containerapp up` only with `--registry-server {acr}.azurecr.io`
         # Use SystemAssigned as default for image pull
-        self.cmd(
-            f'containerapp up -g {resource_group} -n {app} --image {image_name} --ingress external --target-port 80 --environment {env} --registry-server {acr}.azurecr.io')
+        with mock.patch('azure.cli.command_modules.role.custom._gen_guid', side_effect=self.create_guid):
+            self.cmd(
+                f'containerapp up -g {resource_group} -n {app} --image {image_name} --ingress external --target-port 80 --environment {env} --registry-server {acr}.azurecr.io')
 
         self.cmd(f'containerapp show -g {resource_group} -n {app}', checks=[
             JMESPathCheck("properties.provisioningState", "Succeeded"),
@@ -1729,12 +1747,13 @@ class ContainerappUpRegistryIdentityTests(ScenarioTest):
             JMESPathCheck("length(properties.configuration.registries)", 1),
             JMESPathCheck("properties.configuration.registries[0].identity", 'system'),
             JMESPathCheck("properties.configuration.registries[0].server", f'{acr}.azurecr.io'),
-            JMESPathCheck("properties.configuration.registries[0].username", None),
-            JMESPathCheck("properties.configuration.registries[0].passwordSecretRef", None),
+            JMESPathCheck("properties.configuration.registries[0].username", ""),
+            JMESPathCheck("properties.configuration.registries[0].passwordSecretRef", ""),
         ])
         # update the registry to a user-identity
-        self.cmd(
-            f'containerapp up -g {resource_group} -n {app} --registry-identity {identity_rid} --image {image_name} --ingress external --target-port 80 --environment {env} --registry-server {acr}.azurecr.io')
+        with mock.patch('azure.cli.command_modules.role.custom._gen_guid', side_effect=self.create_guid):
+            self.cmd(
+                f'containerapp up -g {resource_group} -n {app} --registry-identity {identity_rid} --image {image_name} --ingress external --target-port 80 --environment {env} --registry-server {acr}.azurecr.io')
 
         self.cmd(f'containerapp show -g {resource_group} -n {app}', checks=[
             JMESPathCheck("properties.provisioningState", "Succeeded"),
@@ -1742,6 +1761,8 @@ class ContainerappUpRegistryIdentityTests(ScenarioTest):
             JMESPathCheck("length(properties.configuration.registries)", 1),
             JMESPathCheck("properties.configuration.registries[0].identity", identity_rid),
             JMESPathCheck("properties.configuration.registries[0].server", f'{acr}.azurecr.io'),
+            JMESPathCheck("properties.configuration.registries[0].username", ""),
+            JMESPathCheck("properties.configuration.registries[0].passwordSecretRef", ""),
         ])
 
         # update the containerapp
@@ -1754,29 +1775,13 @@ class ContainerappUpRegistryIdentityTests(ScenarioTest):
             JMESPathCheck("length(properties.configuration.registries)", 1),
             JMESPathCheck("properties.configuration.registries[0].identity", identity_rid),
             JMESPathCheck("properties.configuration.registries[0].server", f'{acr}.azurecr.io'),
-            JMESPathCheck("properties.configuration.registries[0].username", None),
-            JMESPathCheck("properties.configuration.registries[0].passwordSecretRef", None),
-        ])
-
-        app2 = self.create_random_name(prefix='aca', length=24)
-        self.cmd(
-            f'containerapp up -g {resource_group} -n {app2} --registry-identity {identity_rid} --image {image_name} --ingress external --target-port 80 --environment {env} --registry-server {acr}.azurecr.io --revision-suffix test1')
-
-        self.cmd(f'containerapp show -g {resource_group} -n {app2}', checks=[
-            JMESPathCheck("properties.provisioningState", "Succeeded"),
-            JMESPathCheck("identity.type", "SystemAssigned, UserAssigned"),
-            JMESPathCheck("properties.template.revisionSuffix", "test1"),
-            JMESPathCheck("properties.template.containers[0].image", image_name),
-            JMESPathCheck("properties.configuration.registries[0].identity", identity_rid),
-            JMESPathCheck("properties.configuration.registries[0].server", f'{acr}.azurecr.io'),
-            JMESPathCheck("properties.configuration.registries[0].username", None),
-            JMESPathCheck("properties.configuration.registries[0].passwordSecretRef", None),
+            JMESPathCheck("properties.configuration.registries[0].username", ""),
+            JMESPathCheck("properties.configuration.registries[0].passwordSecretRef", ""),
         ])
 
     @AllowLargeResponse(8192)
     @ResourceGroupPreparer(location="westeurope")
-    @live_only()  # encounters 'CannotOverwriteExistingCassetteException' only when run from recording (passes when run live)
-    def test_containerapp_registry_identity_system(self, resource_group):
+    def test_containerapp_up_registry_identity_system(self, resource_group):
         # MSI is not available in North Central US (Stage), if the TEST_LOCATION is "northcentralusstage", use eastus as location
         location = TEST_LOCATION
         if format_location(location) == format_location(STAGE_LOCATION):
@@ -1792,26 +1797,38 @@ class ContainerappUpRegistryIdentityTests(ScenarioTest):
 
         self.cmd(f'acr create --sku basic -n {acr} -g {resource_group} --admin-enabled')
         self.cmd(f'acr import -n {acr} --source {image_source}')
+        with mock.patch('azure.cli.command_modules.role.custom._gen_guid', side_effect=self.create_guid):
+            self.cmd(f'containerapp up -g {resource_group} -n {app} --registry-identity "system" --image {image_name} --ingress external --target-port 80 --environment {env} --registry-server {acr}.azurecr.io')
 
-        self.cmd(
-            f'containerapp create -g {resource_group} -n {app} --registry-identity "system" --image {image_name} --ingress external --target-port 80 --environment {env} --registry-server {acr}.azurecr.io')
-
-        self.cmd(f'containerapp show -g {resource_group} -n {app}',
-                 checks=[JMESPathCheck("properties.provisioningState", "Succeeded")])
-
-        app2 = self.create_random_name(prefix='aca', length=24)
-        self.cmd(
-            f'containerapp create -g {resource_group} -n {app2} --registry-identity "system" --image {image_name} --ingress external --target-port 80 --environment {env} --registry-server {acr}.azurecr.io --revision-suffix test1')
-
-        self.cmd(f'containerapp show -g {resource_group} -n {app2}', checks=[
+        self.cmd(f'containerapp show -g {resource_group} -n {app}', checks=[
             JMESPathCheck("properties.provisioningState", "Succeeded"),
-            JMESPathCheck("properties.template.revisionSuffix", "test1"),
-            JMESPathCheck("properties.template.containers[0].image", image_name),
+            JMESPathCheck("identity.type", "SystemAssigned"),
+            JMESPathCheck("properties.configuration.secrets", None),
+            JMESPathCheck("length(properties.configuration.registries)", 1),
+            JMESPathCheck("properties.configuration.registries[0].identity", 'system'),
+            JMESPathCheck("properties.configuration.registries[0].server", f'{acr}.azurecr.io'),
+            JMESPathCheck("properties.configuration.registries[0].username", ""),
+            JMESPathCheck("properties.configuration.registries[0].passwordSecretRef", "")
+        ])
+
+        with mock.patch('azure.cli.command_modules.role.custom._gen_guid', side_effect=self.create_guid):
+            self.cmd(
+                f'containerapp up -g {resource_group} -n {app} --registry-identity "system" --image {image_name} --ingress internal --target-port 80 --environment {env} --registry-server {acr}.azurecr.io')
+
+        self.cmd(f'containerapp show -g {resource_group} -n {app}', checks=[
+            JMESPathCheck("properties.provisioningState", "Succeeded"),
+            JMESPathCheck("identity.type", "SystemAssigned"),
+            JMESPathCheck("properties.configuration.secrets", None),
+            JMESPathCheck("length(properties.configuration.registries)", 1),
+            JMESPathCheck("properties.configuration.registries[0].identity", 'system'),
+            JMESPathCheck("properties.configuration.registries[0].server", f'{acr}.azurecr.io'),
+            JMESPathCheck("properties.configuration.registries[0].username", ""),
+            JMESPathCheck("properties.configuration.registries[0].passwordSecretRef", "")
         ])
 
     @AllowLargeResponse(8192)
     @ResourceGroupPreparer(location="westeurope")
-    def test_containerapp_private_registry_port(self, resource_group):
+    def test_containerapp_up_private_registry_port(self, resource_group):
         self.cmd('configure --defaults location={}'.format(TEST_LOCATION))
         app = self.create_random_name(prefix='aca', length=24)
         acr = self.create_random_name(prefix='acr', length=24)
@@ -1827,7 +1844,7 @@ class ContainerappUpRegistryIdentityTests(ScenarioTest):
         password = self.cmd(f'acr credential show -n {acr} --query passwords[0].value').get_output_in_json()
 
         self.cmd(
-            f'containerapp create -g {resource_group} -n {app}  --image {image_name} --ingress external --target-port 80 --environment {env} --registry-server {acr}.azurecr.io:443 --registry-username {acr} --registry-password {password}')
+            f'containerapp up -g {resource_group} -n {app}  --image {image_name} --ingress external --target-port 80 --environment {env} --registry-server {acr}.azurecr.io:443 --registry-username {acr} --registry-password {password}')
 
         self.cmd(f'containerapp show -g {resource_group} -n {app}', checks=[
             JMESPathCheck("properties.provisioningState", "Succeeded"),
@@ -1839,7 +1856,7 @@ class ContainerappUpRegistryIdentityTests(ScenarioTest):
         app2 = self.create_random_name(prefix='aca', length=24)
         image_name = f"{acr}.azurecr.io/k8se/quickstart:latest"
         self.cmd(
-            f'containerapp create -g {resource_group} -n {app2}  --image {image_name} --ingress external --target-port 80 --environment {env} --registry-server {acr}.azurecr.io --registry-username {acr} --registry-password {password}')
+            f'containerapp up -g {resource_group} -n {app2}  --image {image_name} --ingress external --target-port 80 --environment {env} --registry-server {acr}.azurecr.io --registry-username {acr} --registry-password {password}')
 
         self.cmd(f'containerapp show -g {resource_group} -n {app2}', checks=[
             JMESPathCheck("properties.provisioningState", "Succeeded"),
@@ -1850,14 +1867,18 @@ class ContainerappUpRegistryIdentityTests(ScenarioTest):
 
     @AllowLargeResponse(8192)
     @ResourceGroupPreparer(location="westeurope")
-    def test_containerapp_registry_acr_look_up_credentical(self, resource_group):
-        self.cmd('configure --defaults location={}'.format(TEST_LOCATION))
+    def test_containerapp_up_registry_acr_look_up_credentical(self, resource_group):
+        # MSI is not available in North Central US (Stage), if the TEST_LOCATION is "northcentralusstage", use eastus as location
+        location = TEST_LOCATION
+        if format_location(location) == format_location(STAGE_LOCATION):
+            location = "eastus"
+        self.cmd('configure --defaults location={}'.format(location))
         app = self.create_random_name(prefix='aca', length=24)
         acr = self.create_random_name(prefix='acr', length=24)
         image_source = "mcr.microsoft.com/k8se/quickstart:latest"
         image_name = f"{acr}.azurecr.io/k8se/quickstart:latest"
 
-        env = prepare_containerapp_env_for_app_e2e_tests(self)
+        env = prepare_containerapp_env_for_app_e2e_tests(self, location=location)
 
         acr_location = TEST_LOCATION
         if format_location(acr_location) == format_location(STAGE_LOCATION):
@@ -1865,12 +1886,27 @@ class ContainerappUpRegistryIdentityTests(ScenarioTest):
         self.cmd(f'acr create --sku basic -n {acr} -g {resource_group} --admin-enabled --location {acr_location}')
         self.cmd(f'acr import -n {acr} --source {image_source}')
 
+        # `az containberapp create` only with `--registry-server {acr}.azurecr.io`, use SystemAssigned as default for image pull
+        with mock.patch('azure.cli.command_modules.role.custom._gen_guid', side_effect=self.create_guid):
+            self.cmd(f'containerapp up -g {resource_group} -n {app}  --image {image_name} --ingress external --target-port 80 --environment {env} --registry-server {acr}.azurecr.io', expect_failure=False)
+
+        self.cmd(f'containerapp show -g {resource_group} -n {app}', checks=[
+                JMESPathCheck("identity.type", "SystemAssigned"),
+                JMESPathCheck("properties.configuration.secrets", None),
+                JMESPathCheck("length(properties.configuration.registries)", 1),
+                JMESPathCheck("properties.configuration.registries[0].identity", 'system'),
+                JMESPathCheck("properties.configuration.registries[0].server", f'{acr}.azurecr.io'),
+                JMESPathCheck("properties.configuration.registries[0].username", ""),
+                JMESPathCheck("properties.configuration.registries[0].passwordSecretRef", ""),
+        ])
+
+        # --registry-server {acr}.azurecr.io --registry-username, auto lookup credentical
         self.cmd(
-            f'containerapp create -g {resource_group} -n {app}  --image {image_name} --ingress external --target-port 80 --environment {env} --registry-server {acr}.azurecr.io')
+            f'containerapp up -g {resource_group} -n {app}  --image {image_name} --ingress external --target-port 80 --environment {env} --registry-server {acr}.azurecr.io --registry-username a', expect_failure=False)
 
         self.cmd(f'containerapp show -g {resource_group} -n {app}', checks=[
             JMESPathCheck("properties.provisioningState", "Succeeded"),
-            JMESPathCheck("identity.type", "None"),
+            JMESPathCheck("identity.type", "SystemAssigned"),
             JMESPathCheck("properties.configuration.registries[0].server", f"{acr}.azurecr.io"),
             JMESPathCheck("properties.template.containers[0].image", image_name),
             JMESPathCheck("properties.configuration.secrets[0].name", f"{acr}azurecrio-{acr}")
@@ -1878,7 +1914,7 @@ class ContainerappUpRegistryIdentityTests(ScenarioTest):
 
     @AllowLargeResponse(8192)
     @ResourceGroupPreparer(location="westeurope")
-    def test_containerapp_identity_registry(self, resource_group):
+    def test_containerapp_up_identity_registry(self, resource_group):
         # MSI is not available in North Central US (Stage), if the TEST_LOCATION is "northcentralusstage", use eastus as location
         location = TEST_LOCATION
         if format_location(location) == format_location(STAGE_LOCATION):
@@ -1928,7 +1964,7 @@ class ContainerappUpRegistryIdentityTests(ScenarioTest):
 
         # use env system msi to pull image
         self.cmd(
-            f'containerapp create -g {resource_group} -n {ca_name}  --image {image_name} --ingress external --target-port 80 --environment {env} --registry-server {acr}.azurecr.io --registry-identity system-environment')
+            f'containerapp up -g {resource_group} -n {ca_name}  --image {image_name} --ingress external --target-port 80 --environment {env} --registry-server {acr}.azurecr.io --registry-identity system-environment')
         self.cmd(f'containerapp show -g {resource_group} -n {ca_name}', checks=[
             JMESPathCheck("properties.provisioningState", "Succeeded"),
             JMESPathCheck("identity.type", "None"),
